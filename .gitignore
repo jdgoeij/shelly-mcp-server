@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+devices.local.json
+discovery.config.json
+npm-debug.log*
+*.tgz
+.DS_Store
