@@ -28,16 +28,16 @@
     "shelly",
     "home-automation"
   ],
-  "author": "",
+  "author": "Jaap de Goeij",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<your-user>/shelly-mcp-server.git"
+    "url": "https://github.com/jdgoeij/shelly-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/<your-user>/shelly-mcp-server/issues"
+    "url": "https://github.com/jdgoeij/shelly-mcp-server/issues"
   },
-  "homepage": "https://github.com/<your-user>/shelly-mcp-server#readme",
+  "homepage": "https://github.com/jdgoeij/shelly-mcp-server#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "dotenv": "^17.4.2",

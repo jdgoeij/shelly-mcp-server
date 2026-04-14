@@ -1,5 +1,10 @@
 # Shelly Local MCP Server
 
+[![npm version](https://img.shields.io/npm/v/shelly-mcp-server)](https://www.npmjs.com/package/shelly-mcp-server)
+[![npm downloads](https://img.shields.io/npm/dm/shelly-mcp-server)](https://www.npmjs.com/package/shelly-mcp-server)
+[![license](https://img.shields.io/npm/l/shelly-mcp-server)](LICENSE)
+[![github repo](https://img.shields.io/badge/github-jdgoeij%2Fshelly--mcp--server-24292f?logo=github)](https://github.com/jdgoeij/shelly-mcp-server)
+
 MCP server for controlling Shelly Gen2+ devices over your local network.
 
 Features:
@@ -20,7 +25,7 @@ You can run this server in two common ways.
 ### Option A: standalone clone (recommended while developing)
 
 ```bash
-git clone https://github.com/<your-user>/shelly-mcp-server.git
+git clone https://github.com/jdgoeij/shelly-mcp-server.git
 cd shelly-mcp-server
 npm install
 npm run build
@@ -47,7 +52,9 @@ MCP client config example:
 
 ### Option B: run from npm with npx
 
-After publishing, users can run your package without cloning:
+Now that the package is published, users can run it without cloning:
+
+- latest release:
 
 ```json
 {
@@ -55,6 +62,25 @@ After publishing, users can run your package without cloning:
     "shelly-local": {
       "command": "npx",
       "args": ["-y", "shelly-mcp-server"],
+      "cwd": "/absolute/path/to/shelly-config",
+      "env": {
+        "SHELLY_DEVICES_FILE": "./devices.local.json",
+        "SHELLY_DISCOVERY_CONFIG_FILE": "./discovery.config.json",
+        "SHELLY_TIMEOUT_MS": "5000"
+      }
+    }
+  }
+}
+```
+
+- pinned version (recommended for reproducible setups):
+
+```json
+{
+  "mcpServers": {
+    "shelly-local": {
+      "command": "npx",
+      "args": ["-y", "shelly-mcp-server@0.1.0"],
       "cwd": "/absolute/path/to/shelly-config",
       "env": {
         "SHELLY_DEVICES_FILE": "./devices.local.json",
@@ -152,7 +178,7 @@ Before first publish:
    git add .
    git commit -m "Initial public release"
    git branch -M main
-   git remote add origin https://github.com/<your-user>/shelly-mcp-server.git
+  git remote add origin https://github.com/jdgoeij/shelly-mcp-server.git
    git push -u origin main
    ```
 3. Build and verify package contents:
