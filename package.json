@@ -1,6 +1,6 @@
 {
   "name": "shelly-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local MCP server for controlling Shelly devices over LAN",
   "type": "module",
   "engines": {
