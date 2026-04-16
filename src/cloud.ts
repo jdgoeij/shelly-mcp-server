@@ -17,13 +17,8 @@ export interface CloudClientOptions {
 interface CloudDevice {
   id: string;
   name?: string;
-  roomId?: number;
+  room?: string;
   online?: boolean;
-}
-
-interface CloudRoom {
-  id: number;
-  name: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,15 +35,71 @@ function normalizeMac(value: string | undefined): string | undefined {
   return compact.length === 12 ? compact : undefined;
 }
 
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function toCloudDeviceId(value: string): string {
+  return value.toLowerCase();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function chunk<T>(values: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
+}
+
+function extractCloudDeviceIdCandidate(device: DiscoveredShelly): string | undefined {
+  const fromSaved = normalizeMac(device.cloudDeviceId);
+  if (fromSaved) return toCloudDeviceId(fromSaved);
+
+  const fromMac = normalizeMac(device.mac);
+  if (fromMac) return toCloudDeviceId(fromMac);
+
+  const trailingHex = device.id?.match(/([a-fA-F0-9]{12})$/)?.[1];
+  if (trailingHex) return toCloudDeviceId(trailingHex);
+
+  return undefined;
+}
+
+function extractCloudRoom(settings: Record<string, unknown> | null): string | undefined {
+  if (!settings) return undefined;
+
+  const device = asRecord(settings.device);
+  const deviceInfo = asRecord(settings.DeviceInfo);
+  const sys = asRecord(settings.sys);
+
+  return (
+    getString(device?.room) ??
+    getString(device?.location_name) ??
+    getString(deviceInfo?.room) ??
+    getString(deviceInfo?.location_name) ??
+    getString(sys?.room) ??
+    getString(sys?.location_name) ??
+    getString(settings.room) ??
+    getString(settings.location_name)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Auth-key API calls
 // ---------------------------------------------------------------------------
 
-async function cloudGet(server: string, path: string, authKey: string, timeoutMs: number): Promise<unknown> {
-  const sep = path.includes("?") ? "&" : "?";
-  const url = `https://${server}/${path}${sep}auth_key=${encodeURIComponent(authKey)}`;
+async function cloudPost(server: string, path: string, authKey: string, body: unknown, timeoutMs: number): Promise<unknown> {
+  const url = `https://${server}/${path}?auth_key=${encodeURIComponent(authKey)}`;
   const response = await fetch(url, {
-    headers: { Accept: "application/json" },
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
@@ -59,58 +110,56 @@ async function cloudGet(server: string, path: string, authKey: string, timeoutMs
 }
 
 // ---------------------------------------------------------------------------
-// Fetch device list (returns cloud names + room_ids)
+// Fetch device states in v2 batches (up to 10 ids / request, 1 request / second)
 // ---------------------------------------------------------------------------
 
-async function fetchDeviceList(options: CloudClientOptions): Promise<CloudDevice[]> {
-  const raw = await cloudGet(options.server, "interface/device/list", options.authKey, options.timeoutMs);
-  const root = asRecord(raw);
-  if (root?.isok !== true) {
-    const errors = root?.errors ? JSON.stringify(root.errors) : "unknown";
-    throw new Error(`Shelly Cloud interface/device/list error: ${errors}`);
+async function fetchDeviceStatesBatched(deviceIds: string[], options: CloudClientOptions): Promise<CloudDevice[]> {
+  const uniqueIds = [...new Set(deviceIds)];
+  if (uniqueIds.length === 0) return [];
+
+  const results: CloudDevice[] = [];
+  const batches = chunk(uniqueIds, 10);
+
+  for (let index = 0; index < batches.length; index += 1) {
+    if (index > 0) {
+      await delay(1000);
+    }
+
+    const ids = batches[index];
+    const raw = await cloudPost(
+      options.server,
+      "v2/devices/api/get",
+      options.authKey,
+      {
+        ids,
+        select: ["settings"],
+        pick: {
+          settings: ["DeviceInfo", "device", "sys", "room", "location_name"],
+        },
+      },
+      options.timeoutMs
+    );
+
+    const states = Array.isArray(raw) ? raw : [raw];
+    for (const entry of states) {
+      const obj = asRecord(entry);
+      if (!obj) continue;
+
+      const id = getString(obj.id);
+      if (!id) continue;
+
+      const settings = asRecord(obj.settings);
+      const deviceInfo = asRecord(settings?.DeviceInfo);
+      results.push({
+        id,
+        name: getString(deviceInfo?.name),
+        room: extractCloudRoom(settings),
+        online: obj.online === true || obj.online === 1,
+      });
+    }
   }
 
-  const data = asRecord(root.data);
-  const devicesArr = data?.devices;
-  if (!Array.isArray(devicesArr)) return [];
-
-  const result: CloudDevice[] = [];
-  for (const entry of devicesArr) {
-    const obj = asRecord(entry);
-    if (!obj) continue;
-    const id = typeof obj.id === "string" ? obj.id : undefined;
-    if (!id) continue;
-    result.push({
-      id,
-      name: typeof obj.name === "string" && obj.name.trim() ? obj.name.trim() : undefined,
-      roomId: typeof obj.room_id === "number" ? obj.room_id : undefined,
-      online: obj.online === true || obj.online === 1,
-    });
-  }
-  return result;
-}
-
-// ---------------------------------------------------------------------------
-// Fetch room list (returns room id → name mapping)
-// ---------------------------------------------------------------------------
-
-async function fetchRoomList(options: CloudClientOptions): Promise<Map<number, string>> {
-  const raw = await cloudGet(options.server, "interface/room/list", options.authKey, options.timeoutMs);
-  const root = asRecord(raw);
-  if (root?.isok !== true) return new Map();
-
-  const data = asRecord(root.data);
-  const rooms = asRecord(data?.rooms);
-  if (!rooms) return new Map();
-
-  const result = new Map<number, string>();
-  for (const [idStr, roomValue] of Object.entries(rooms)) {
-    const roomObj = asRecord(roomValue);
-    if (!roomObj) continue;
-    const name = typeof roomObj.name === "string" ? roomObj.name.trim() : undefined;
-    if (name) result.set(Number(idStr), name);
-  }
-  return result;
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,40 +172,34 @@ export async function enrichDiscoveredDevicesWithCloud(
 ): Promise<DiscoveredShelly[]> {
   if (devices.length === 0) return devices;
 
-  // Fetch both in parallel; treat failures as non-fatal (e.g. rate limits)
-  const [cloudDevices, roomMap] = await Promise.all([
-    fetchDeviceList(options).catch((e) => {
-      console.error(`[shelly-mcp] Cloud device list failed: ${e instanceof Error ? e.message : e}`);
-      return [] as CloudDevice[];
-    }),
-    fetchRoomList(options).catch((e) => {
-      console.error(`[shelly-mcp] Cloud room list failed: ${e instanceof Error ? e.message : e}`);
-      return new Map<number, string>();
-    }),
-  ]);
+  const cloudIds = devices
+    .map((device) => extractCloudDeviceIdCandidate(device))
+    .filter((value): value is string => Boolean(value));
+
+  const cloudDevices = await fetchDeviceStatesBatched(cloudIds, options).catch((e) => {
+    console.error(`[shelly-mcp] Cloud v2 device fetch failed: ${e instanceof Error ? e.message : e}`);
+    return [] as CloudDevice[];
+  });
 
   if (cloudDevices.length === 0) return devices;
 
-  // Build lookup by normalized MAC (cloud device id is a hex MAC)
-  const byMac = new Map<string, CloudDevice>();
+  const byId = new Map<string, CloudDevice>();
   for (const d of cloudDevices) {
-    const mac = normalizeMac(d.id);
-    if (mac) byMac.set(mac, d);
+    const cloudId = normalizeMac(d.id);
+    if (cloudId) byId.set(toCloudDeviceId(cloudId), d);
   }
 
   return devices.map((device) => {
-    const deviceMac = normalizeMac(device.mac) ?? normalizeMac(device.id);
-    const match = deviceMac ? byMac.get(deviceMac) : undefined;
+    const requestId = extractCloudDeviceIdCandidate(device);
+    const match = requestId ? byId.get(requestId) : undefined;
     if (!match) return device;
-
-    const roomName = match.roomId != null ? roomMap.get(match.roomId) : undefined;
 
     return {
       ...device,
       cloudDeviceId: match.id,
       cloudName: match.name,
-      cloudRoom: roomName,
-      cloudMatchedBy: "mac" as const,
+      cloudRoom: match.room,
+      cloudMatchedBy: "id" as const,
     };
   });
 }

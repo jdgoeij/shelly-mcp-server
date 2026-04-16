@@ -124,6 +124,7 @@ This creates or updates `devices.local.json`.
 ## Cloud enrichment (optional)
 
 Cloud enrichment imports cloud-assigned names and rooms during discovery. Device control remains local.
+The server uses Shelly Cloud Control v2 `POST /v2/devices/api/get`, batches up to 10 device ids per request, and respects the documented 1 request/second cloud rate limit.
 
 If you are running standalone from clone:
 
