@@ -10,9 +10,7 @@ import {
   type CallToolRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { enrichDiscoveredDevicesWithCloud } from "./cloud.js";
 import { findDevice, loadConfig, type ShellyDevice } from "./config.js";
-import { resolveAuthKey, resolveServer, getCredentialsPath } from "./credentials.js";
 import { discoverShellyDevices } from "./discovery.js";
 import { callShellyRpc, type RpcRequestStyle } from "./shelly-client.js";
 
@@ -49,17 +47,11 @@ const DiscoverArgs = z.object({
   timeoutMs: z.number().int().positive().optional(),
   concurrency: z.number().int().min(1).max(128).optional(),
   maxHosts: z.number().int().min(1).max(4096).optional(),
-  enrichCloud: z.boolean().optional(),
-  cloudAuthKey: z.string().min(1).optional(),
-  cloudServer: z.string().min(1).optional(),
-  cloudTimeoutMs: z.number().int().positive().optional(),
 });
 
 const DiscoverAndSaveArgs = DiscoverArgs.extend({
   outputFile: z.string().min(1).optional(),
   merge: z.boolean().optional(),
-  enrichNames: z.boolean().optional(),
-  enrichRoom: z.boolean().optional(),
 });
 
 const DiscoverSaveAndValidateArgs = DiscoverAndSaveArgs.extend({
@@ -168,8 +160,6 @@ function saveDiscoveredDevices(
   options: {
     outputFile?: string;
     merge?: boolean;
-    enrichNames?: boolean;
-    enrichRoom?: boolean;
   }
 ): {
   outputFile: string;
@@ -180,8 +170,6 @@ function saveDiscoveredDevices(
 } {
   const outputFile = path.resolve(options.outputFile ?? process.env.SHELLY_DEVICES_FILE ?? "./devices.local.json");
   const merge = options.merge ?? true;
-  const enrichNames = options.enrichNames ?? true;
-  const enrichRoom = options.enrichRoom ?? true;
 
   const existing = merge ? loadDeviceFile(outputFile) : [];
   const existingByUrl = new Map(existing.map((d) => [d.baseUrl, d]));
@@ -197,20 +185,16 @@ function saveDiscoveredDevices(
     const ipSuffix = discovered.ip.split(".").slice(-2).join("_");
     const fallback = slugify(`${modelSlug}_${ipSuffix}`) || `shelly_${ipSuffix}`;
     const preferredFriendlyName =
-      discovered.cloudName?.trim() ||
       discovered.friendlyName?.trim() ||
       discovered.configuredName?.trim();
-    const suggested = enrichNames
-      ? preferredFriendlyName || fallback
-      : fallback;
+    const suggested = preferredFriendlyName || fallback;
 
     const existingEntry = existingByUrl.get(discovered.baseUrl);
     if (existingEntry) {
-      if (enrichNames && preferredFriendlyName) {
+      if (preferredFriendlyName) {
         usedNames.delete(existingEntry.name);
         existingEntry.name = uniqueName(preferredFriendlyName, usedNames);
       } else if (
-        enrichNames &&
         discovered.configuredName &&
         isGeneratedFallbackName(existingEntry.name, fallback)
       ) {
@@ -218,14 +202,10 @@ function saveDiscoveredDevices(
         existingEntry.name = uniqueName(discovered.configuredName.trim(), usedNames);
       }
 
-      if (enrichRoom && (discovered.cloudRoom || discovered.room)) {
-        existingEntry.room = discovered.cloudRoom ?? discovered.room;
+      if (discovered.room) {
+        existingEntry.room = discovered.room;
       }
 
-      existingEntry.cloudName = discovered.cloudName;
-      existingEntry.cloudRoom = discovered.cloudRoom;
-      existingEntry.cloudDeviceId = discovered.cloudDeviceId;
-      existingEntry.cloudMatchedBy = discovered.cloudMatchedBy;
       existingEntry.friendlyName = discovered.friendlyName;
       existingEntry.primaryComponentName = discovered.primaryComponentName;
       existingEntry.componentNames = discovered.componentNames;
@@ -251,11 +231,7 @@ function saveDiscoveredDevices(
     const newEntry: ShellyDevice = {
       name,
       baseUrl: discovered.baseUrl,
-      room: enrichRoom ? (discovered.cloudRoom ?? discovered.room) : undefined,
-      cloudName: discovered.cloudName,
-      cloudRoom: discovered.cloudRoom,
-      cloudDeviceId: discovered.cloudDeviceId,
-      cloudMatchedBy: discovered.cloudMatchedBy,
+      room: discovered.room,
       friendlyName: discovered.friendlyName,
       primaryComponentName: discovered.primaryComponentName,
       componentNames: discovered.componentNames,
@@ -300,52 +276,6 @@ function asText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-async function maybeCloudEnrichDiscovery(
-  discovery: Awaited<ReturnType<typeof discoverShellyDevices>>,
-  options: {
-    enrichCloud?: boolean;
-    cloudAuthKey?: string;
-    cloudServer?: string;
-    cloudTimeoutMs?: number;
-  }
-): Promise<Awaited<ReturnType<typeof discoverShellyDevices>>> {
-  const enrichCloud = options.enrichCloud ?? false;
-  if (!enrichCloud) {
-    return discovery;
-  }
-
-  const authKey = resolveAuthKey(options.cloudAuthKey);
-  if (!authKey) {
-    throw new Error(
-      "Shelly Cloud enrichment requested but no auth_key found. " +
-      "Run 'npm run setup-cloud' in the shelly-mcp-server directory, " +
-      "or set SHELLY_CLOUD_AUTH_KEY env var."
-    );
-  }
-
-  const server = resolveServer(options.cloudServer);
-  if (!server) {
-    throw new Error(
-      "Shelly Cloud enrichment requested but no cloud server found. " +
-      "Run 'npm run setup-cloud' in the shelly-mcp-server directory, " +
-      "or set SHELLY_CLOUD_SERVER env var."
-    );
-  }
-
-  const timeoutMs = options.cloudTimeoutMs ?? Number(process.env.SHELLY_CLOUD_TIMEOUT_MS ?? "10000");
-
-  const devices = await enrichDiscoveredDevicesWithCloud(discovery.devices, {
-    authKey,
-    server,
-    timeoutMs,
-  });
-
-  return {
-    ...discovery,
-    devices,
-  };
-}
-
 async function runTool(request: CallToolRequest): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const { name, arguments: args = {} } = request.params;
 
@@ -360,10 +290,6 @@ async function runTool(request: CallToolRequest): Promise<{ content: Array<{ typ
                 name: device.name,
                 baseUrl: device.baseUrl,
                 room: device.room,
-                cloudName: device.cloudName,
-                cloudRoom: device.cloudRoom,
-                cloudDeviceId: device.cloudDeviceId,
-                cloudMatchedBy: device.cloudMatchedBy,
                 model: device.model,
                 generation: device.gen,
                 app: device.app,
@@ -462,20 +388,16 @@ async function runTool(request: CallToolRequest): Promise<{ content: Array<{ typ
         ...(effective.cidrs ?? []),
       ];
 
-      const localDiscovery = await discoverShellyDevices(config.devices, {
+      const discovery = await discoverShellyDevices(config.devices, {
         cidrs: cidrList.length > 0 ? cidrList : undefined,
         timeoutMs: effective.timeoutMs ?? Math.min(config.timeoutMs, 1500),
         concurrency: effective.concurrency ?? 32,
         maxHosts: effective.maxHosts ?? 512,
       });
 
-      const discovery = await maybeCloudEnrichDiscovery(localDiscovery, effective);
-
       const saved = saveDiscoveredDevices(discovery, {
         outputFile: effective.outputFile,
         merge: effective.merge,
-        enrichNames: effective.enrichNames,
-        enrichRoom: effective.enrichRoom,
       });
 
       return {
@@ -504,20 +426,16 @@ async function runTool(request: CallToolRequest): Promise<{ content: Array<{ typ
         ...(effective.cidrs ?? []),
       ];
 
-      const localDiscovery = await discoverShellyDevices(config.devices, {
+      const discovery = await discoverShellyDevices(config.devices, {
         cidrs: cidrList.length > 0 ? cidrList : undefined,
         timeoutMs: effective.timeoutMs ?? Math.min(config.timeoutMs, 1500),
         concurrency: effective.concurrency ?? 32,
         maxHosts: effective.maxHosts ?? 512,
       });
 
-      const discovery = await maybeCloudEnrichDiscovery(localDiscovery, effective);
-
       const saved = saveDiscoveredDevices(discovery, {
         outputFile: effective.outputFile,
         merge: effective.merge,
-        enrichNames: effective.enrichNames,
-        enrichRoom: effective.enrichRoom,
       });
 
       const validateTimeoutMs = effective.validateTimeoutMs ?? config.timeoutMs;
@@ -849,31 +767,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "boolean",
             description: "When true, merge with existing file content by baseUrl. Default true.",
           },
-          enrichNames: {
-            type: "boolean",
-            description: "When true, prefer configured Shelly names from Sys.GetConfig when saving. Default true.",
-          },
-          enrichRoom: {
-            type: "boolean",
-            description: "When true, include room metadata from Sys.GetConfig when available. Default true.",
-          },
-          enrichCloud: {
-            type: "boolean",
-            description: "When true, enrich discovered devices with Shelly Cloud names and rooms via auth_key. Requires prior 'npm run setup-cloud' or SHELLY_CLOUD_AUTH_KEY + SHELLY_CLOUD_SERVER env vars.",
-          },
-          cloudAuthKey: {
-            type: "string",
-            description: "Shelly Cloud auth_key. Usually auto-resolved from ~/.shelly-mcp/credentials.json or SHELLY_CLOUD_AUTH_KEY env.",
-          },
-          cloudServer: {
-            type: "string",
-            description: "Shelly Cloud server hostname (e.g. shelly-205-eu.shelly.cloud). Usually auto-resolved from ~/.shelly-mcp/credentials.json or SHELLY_CLOUD_SERVER env.",
-          },
-          cloudTimeoutMs: {
-            type: "integer",
-            minimum: 1,
-            description: "Timeout for Shelly Cloud API requests in milliseconds.",
-          },
         },
         additionalProperties: false,
       },
@@ -917,31 +810,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           merge: {
             type: "boolean",
             description: "When true, merge with existing file content by baseUrl. Default true.",
-          },
-          enrichNames: {
-            type: "boolean",
-            description: "When true, prefer configured Shelly names from Sys.GetConfig when saving. Default true.",
-          },
-          enrichRoom: {
-            type: "boolean",
-            description: "When true, include room metadata from Sys.GetConfig when available. Default true.",
-          },
-          enrichCloud: {
-            type: "boolean",
-            description: "When true, enrich discovered devices with Shelly Cloud names and rooms via auth_key. Requires prior 'npm run setup-cloud' or SHELLY_CLOUD_AUTH_KEY + SHELLY_CLOUD_SERVER env vars.",
-          },
-          cloudAuthKey: {
-            type: "string",
-            description: "Shelly Cloud auth_key. Usually auto-resolved from ~/.shelly-mcp/credentials.json or SHELLY_CLOUD_AUTH_KEY env.",
-          },
-          cloudServer: {
-            type: "string",
-            description: "Shelly Cloud server hostname (e.g. shelly-205-eu.shelly.cloud). Usually auto-resolved from ~/.shelly-mcp/credentials.json or SHELLY_CLOUD_SERVER env.",
-          },
-          cloudTimeoutMs: {
-            type: "integer",
-            minimum: 1,
-            description: "Timeout for Shelly Cloud API requests in milliseconds.",
           },
           validateTimeoutMs: {
             type: "integer",

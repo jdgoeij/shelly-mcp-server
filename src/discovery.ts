@@ -26,10 +26,6 @@ export interface DiscoveredShelly {
   friendlyName?: string;
   configuredName?: string;
   room?: string;
-  cloudDeviceId?: string;
-  cloudName?: string;
-  cloudRoom?: string;
-  cloudMatchedBy?: "id" | "mac" | "ip";
   componentNames?: Record<string, string>;
   primaryComponentName?: string;
   authRequired?: boolean;

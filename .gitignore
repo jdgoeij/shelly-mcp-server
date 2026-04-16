@@ -6,3 +6,4 @@ discovery.config.json
 npm-debug.log*
 *.tgz
 .DS_Store
+tmp/
