@@ -9,7 +9,6 @@ MCP server for controlling Shelly Gen2+ devices over your local network.
 
 Features:
 - automatic LAN discovery
-- optional Shelly Cloud name/room enrichment
 - strongly typed tools for status, switches, covers, and raw RPC calls
 
 ## Requirements
@@ -105,9 +104,6 @@ Create local config files in your chosen `cwd` folder:
 {
   "cidr": "192.168.1.0/24",
   "merge": true,
-  "enrichNames": true,
-  "enrichRoom": true,
-  "enrichCloud": false,
   "timeoutMs": 1500,
   "concurrency": 32,
   "maxHosts": 512,
@@ -121,24 +117,6 @@ Then ask your MCP client assistant:
 
 This creates or updates `devices.local.json`.
 
-## Cloud enrichment (optional)
-
-Cloud enrichment imports cloud-assigned names and rooms during discovery. Device control remains local.
-
-If you are running standalone from clone:
-
-```bash
-npm run setup-cloud
-```
-
-If you are running via npx, set these env vars in your MCP client config instead:
-
-- `SHELLY_CLOUD_AUTH_KEY`
-- `SHELLY_CLOUD_SERVER`
-- optional `SHELLY_CLOUD_TIMEOUT_MS`
-
-Find cloud values at https://my.shelly.cloud/ -> User Settings -> Authorization cloud key.
-
 ## Environment variables
 
 | Variable | Default | Description |
@@ -146,9 +124,6 @@ Find cloud values at https://my.shelly.cloud/ -> User Settings -> Authorization 
 | `SHELLY_DEVICES_FILE` | `./devices.local.json` | Path to persisted device inventory |
 | `SHELLY_DISCOVERY_CONFIG_FILE` | `./discovery.config.json` | Path to discovery defaults |
 | `SHELLY_TIMEOUT_MS` | `5000` | RPC timeout in milliseconds |
-| `SHELLY_CLOUD_AUTH_KEY` | - | Shelly Cloud auth key |
-| `SHELLY_CLOUD_SERVER` | - | Shelly Cloud server hostname |
-| `SHELLY_CLOUD_TIMEOUT_MS` | `10000` | Cloud API timeout in milliseconds |
 
 ## Available tools
 
